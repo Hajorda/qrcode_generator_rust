@@ -1,4 +1,4 @@
-use image::{imageops, ImageBuffer, Rgba};
+use image::{imageops, GenericImageView, ImageBuffer, Rgba, DynamicImage};
 use qrcode_generator::QrCodeEcc;
 use std::io::Cursor;
 
@@ -11,10 +11,12 @@ pub(super) fn generate(
     options: Options,
     logo: &[u8],
     image_size: usize,
+    colors: Option<(Rgba<u8>, Rgba<u8>)>,
+    text_overlay: Option<String>, // Added parameter for text overlay
 ) -> Result<Vec<u8>, anyhow::Error> {
     // Generate a QR code image that can tolerate 25% of erroneous codewords.
     let mut qr = image::DynamicImage::ImageLuma8(qrcode_generator::to_image_buffer(
-        input,
+        input.clone(),
         QrCodeEcc::Quartile,
         image_size,
     )?)
@@ -32,6 +34,14 @@ pub(super) fn generate(
         add_gradient(&mut qr);
     }
 
+    if let Some((foreground_color, background_color)) = colors {
+        customize_colors(&mut qr, foreground_color, background_color);
+    }
+
+    if let Some(text) = text_overlay {
+        overlay_text(&mut qr, &text);
+    }
+
     let mut result = vec![];
     qr.write_to(&mut Cursor::new(&mut result), image::ImageOutputFormat::Png)?;
     Ok(result)
@@ -46,10 +56,7 @@ fn make_transparent(qr: &mut ImageBuffer<Rgba<u8>, Vec<u8>>) {
     }
 }
 
-
 /// Adds the given logo at the center of QR code image.
-/// It ensures that the logo does not cover more than 10% of the image, which is
-/// below the QR error threshold.
 fn add_logo(qr: &mut ImageBuffer<Rgba<u8>, Vec<u8>>, logo: &[u8]) {
     let image_size = qr.width().min(qr.height()) as usize;
     let element_size = get_qr_element_size(qr);
@@ -113,6 +120,17 @@ fn add_gradient(qr: &mut ImageBuffer<Rgba<u8>, Vec<u8>>) {
     }
 }
 
+/// Applies custom foreground and background colors to the QR code image.
+fn customize_colors(qr: &mut ImageBuffer<Rgba<u8>, Vec<u8>>, foreground: Rgba<u8>, background: Rgba<u8>) {
+    for pixel in qr.pixels_mut() {
+        if pixel.0 == [0, 0, 0, 255] {
+            *pixel = foreground;
+        } else if pixel.0 == [255, 255, 255, 255] {
+            *pixel = background;
+        }
+    }
+}
+
 /// Given a QR code image, this function returns the size of the smallest black
 /// square by inspecting the special element in the top-left part of the image.
 fn get_qr_element_size(qr: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> usize {
@@ -141,3 +159,10 @@ fn get_qr_element_size(qr: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> usize {
 
     element_size as usize
 }
+
+/// Overlay text onto the QR code image.
+fn overlay_text(qr: &mut ImageBuffer<Rgba<u8>, Vec<u8>>, text: &str) {
+    let font = Vec::from(include_bytes!("../assets/font.ttf") as &[u8]);
+    let font = image::load_from_memory(&font).unwrap().into_rgba8();
+    let (qr_width, qr_height) = (qr.width() as f32, qr.height() as f32);
+    let scale = (qr_width / 20.0).round().max(1
